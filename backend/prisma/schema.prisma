@@ -1,0 +1,229 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum DocumentStatus {
+  UPLOADING
+  PROCESSING
+  INDEXING
+  READY
+  FAILED
+}
+
+enum MessageRole {
+  USER
+  ASSISTANT
+}
+
+enum Difficulty {
+  EASY
+  MEDIUM
+  HARD
+}
+
+enum RecommendationStatus {
+  NEW
+  DONE
+  DISMISSED
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
+  passwordHash String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  documents         Document[]
+  conversations     Conversation[]
+  quizzes           Quiz[]
+  quizAttempts      QuizAttempt[]
+  topics            Topic[]
+  recommendations   StudyRecommendation[]
+  topicProgress     UserTopicProgress[]
+}
+
+model Document {
+  id           String         @id @default(cuid())
+  userId       String
+  name         String
+  fileUrl      String?
+  storageKey   String?
+  fileType     String         @default("application/pdf")
+  fileSize     Int            @default(0)
+  status       DocumentStatus @default(UPLOADING)
+  pageCount    Int?
+  errorMessage String?
+  summary      Json?
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  user     User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  chunks   DocumentChunk[]
+  quizzes  Quiz[]
+
+  @@index([userId, status])
+  @@index([userId, createdAt])
+}
+
+model DocumentChunk {
+  id          String  @id @default(cuid())
+  documentId  String
+  content     String  @db.Text
+  pageNumber  Int
+  chunkIndex  Int
+  tokenCount  Int?
+  metadata    Json?
+  embedding Unsupported("vector(1536)")?
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@unique([documentId, chunkIndex])
+  @@index([documentId, pageNumber])
+}
+
+model Conversation {
+  id        String   @id @default(cuid())
+  userId    String
+  title     String   @default("New conversation")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages Message[]
+
+  @@index([userId, updatedAt])
+}
+
+model Message {
+  id             String      @id @default(cuid())
+  conversationId String
+  role           MessageRole
+  content        String      @db.Text
+  citations      Json?
+  createdAt      DateTime    @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+}
+
+model Quiz {
+  id          String     @id @default(cuid())
+  userId      String
+  documentId  String?
+  title       String
+  difficulty  Difficulty @default(MEDIUM)
+  createdAt   DateTime   @default(now())
+
+  user     User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  document Document?     @relation(fields: [documentId], references: [id], onDelete: SetNull)
+  questions Question[]
+  attempts QuizAttempt[]
+
+  @@index([userId, createdAt])
+}
+
+model Question {
+  id           String     @id @default(cuid())
+  quizId       String
+  order        Int
+  question     String     @db.Text
+  options      Json
+  correctIndex Int
+  explanation  String     @db.Text
+  topic        String
+  difficulty   Difficulty @default(MEDIUM)
+  sourcePage   Int?
+  sourceQuote  String?    @db.Text
+
+  quiz    Quiz         @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  answers QuizAnswer[]
+
+  @@unique([quizId, order])
+  @@index([quizId])
+}
+
+model QuizAttempt {
+  id              String   @id @default(cuid())
+  quizId          String
+  userId          String
+  score           Int
+  totalQuestions  Int
+  percentage      Float
+  durationSeconds Int?
+  createdAt       DateTime @default(now())
+
+  quiz    Quiz         @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  user    User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  answers QuizAnswer[]
+
+  @@index([userId, createdAt])
+  @@index([quizId, createdAt])
+}
+
+model QuizAnswer {
+  id            String  @id @default(cuid())
+  attemptId     String
+  questionId    String
+  selectedIndex Int?
+  isCorrect     Boolean
+
+  attempt  QuizAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  question Question    @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@unique([attemptId, questionId])
+  @@index([attemptId])
+}
+
+model Topic {
+  id       String   @id @default(cuid())
+  userId   String
+  name     String
+  normalizedName String
+  createdAt DateTime @default(now())
+
+  user     User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  progress UserTopicProgress[]
+
+  @@unique([userId, normalizedName])
+}
+
+model UserTopicProgress {
+  id              String   @id @default(cuid())
+  userId          String
+  topicId         String
+  correct         Int      @default(0)
+  total           Int      @default(0)
+  accuracy        Float    @default(0)
+  lastPracticedAt DateTime @default(now())
+
+  user  User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  topic Topic @relation(fields: [topicId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, topicId])
+  @@index([userId, accuracy])
+}
+
+model StudyRecommendation {
+  id         String               @id @default(cuid())
+  userId     String
+  type       String
+  title      String
+  reason     String               @db.Text
+  actionUrl  String?
+  priority   Int                  @default(0)
+  dedupeKey  String               @unique
+  status     RecommendationStatus @default(NEW)
+  createdAt  DateTime             @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status, priority])
+}
